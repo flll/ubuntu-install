@@ -1,0 +1,178 @@
+#cloud-config
+## lll-legacy用 (2024/11/03)
+## readme.mdを参照すること
+autoinstall:
+  version: 1
+  storage:
+    config:
+      # ディスクの定義 (serial: AH10847)
+      - type: disk
+        id: id_disk-AH10847
+        match:
+          ssd: true
+          serial: Samsung_SSD_750_EVO_120GB_S2SGNWAH108479B
+        ptable: gpt
+        wipe: superblock
+        name: system
+
+      # EFIパーティション (1GB)
+      - type: partition
+        id: part-efi
+        device: id_disk-AH10847
+        number: 1
+        size: 1G
+        wipe: superblock
+        flag: boot
+        grub_device: true
+
+      # /bootパーティション (2GB)
+      - type: partition
+        id: part-boot
+        device: id_disk-AH10847
+        number: 2
+        size: 2G
+        wipe: superblock
+
+      # 暗号化するルートパーティション (MAX)
+      - type: partition
+        id: part-root
+        device: id_disk-AH10847
+        number: 3
+        size: -1
+        wipe: superblock
+
+      # dm-cryptによる暗号化設定
+      - type: dm_crypt
+        id: crypt-root
+        volume: part-root
+        dm_name: crypt-root
+        key: password
+
+      # ファイルシステムのフォーマット設定（３つ）
+      - type: format
+        id: format-efi
+        volume: part-efi
+        fstype: fat32
+        label: efi
+
+      - type: format
+        id: format-boot
+        volume: part-boot
+        fstype: btrfs
+        label: boot
+
+      - type: format
+        id: format-root
+        volume: crypt-root
+        fstype: btrfs
+        label: root
+
+      # マウントポイントの設定（３つ）
+      - type: mount
+        id: mount-efi
+        device: format-efi
+        path: /boot/efi
+
+      - type: mount
+        id: mount-boot
+        device: format-boot
+        path: /boot
+        options: 'defaults,relatime,compress=lzo,ssd,discard,autodefrag,space_cache=v2'
+
+      - type: mount
+        id: mount-root
+        device: format-root
+        path: /
+        options: 'defaults,relatime,compress=lzo,ssd,discard,autodefrag,space_cache=v2'
+
+  timezone: Asia/Tokyo
+  locale: ja_JP.UTF-8
+
+  # ユーザー設定
+  identity:
+    hostname: lll-legacy
+    realname: 'lll'
+    username: lll
+    password: "$5$TEvq/l2lTteHedkU$iHXg6oJmozqPzg46A34QSDmJAothB9j3QySeIP3tfO3" # mkpasswd --method=SHA-256 で生成したハッシュ値 # require: apt install whois
+  refresh-installer:
+    update: yes
+  drivers:
+    install: true
+  codecs:
+    install: true
+  oem:
+    install: auto
+  # インストールするパッケージ
+  packages:
+    - whois
+    - ufw
+    - vim
+    - sudo
+    - nano
+    - curl
+    - git
+    - htop
+    - tmux
+    - net-tools
+    - tree
+    - unzip
+    - wget
+    - build-essential
+    - ca-certificates
+    - neofetch
+    - ripgrep
+    - fzf
+    - jq
+    - ncdu
+    - iotop
+    - nmap
+    - screen
+    - fish
+    - gcc
+    - g++
+    - make
+    - cmake
+    - gdb
+    - lldb
+    - clang
+    - python3
+    - python3-pip
+    - python3-venv
+    - nodejs
+    - npm
+    - rustc
+    - cargo
+    - golang
+  # インストール後のコマンド実行
+  late-commands:
+    # sudoersの設定
+    - curtin in-target -- sh -c 'echo "lll   ALL=(ALL:ALL) ALL" > /etc/sudoers.d/99-lll'
+    - curtin in-target -- chmod 0440 /etc/sudoers.d/99-lll
+    - curtin in-target -- chown root:root /etc/sudoers.d/99-lll
+
+    # ファイアウォールの設定
+    - curtin in-target -- ufw enable
+    - curtin in-target -- ufw default deny incoming
+    - curtin in-target -- ufw default allow outgoing
+
+    # システム設定の最適化
+    - curtin in-target -- sh -c 'echo "net.ipv4.tcp_fastopen = 3" > /etc/sysctl.d/99-performance.conf'
+    - curtin in-target -- sh -c 'echo "net.ipv4.tcp_congestion_control = bbr" >> /etc/sysctl.d/99-performance.conf'
+    - curtin in-target -- sh -c 'echo "vm.swappiness = 10" >> /etc/sysctl.d/99-performance.conf'
+    - curtin in-target -- sysctl -p /etc/sysctl.d/99-performance.conf
+
+    # Tailscaleのフォワーディング設定
+    - curtin in-target -- sh -c 'echo "net.ipv4.ip_forward = 1" > /etc/sysctl.d/99-tailscale.conf'
+    - curtin in-target -- sh -c 'echo "net.ipv6.conf.all.forwarding = 1" >> /etc/sysctl.d/99-tailscale.conf'
+    - curtin in-target -- sysctl -p /etc/sysctl.d/99-tailscale.conf
+
+    # Tailscaleのインストール
+    - curtin in-target -- sh -c "curl -fsSL https://tailscale.com/install.sh | sh"
+
+    # Dockerのインストール
+    - curtin in-target -- install -m 0755 -d /etc/apt/keyrings
+    - curtin in-target -- curl -fsSL https://download.docker.com/linux/ubuntu/gpg -o /etc/apt/keyrings/docker.asc
+    - curtin in-target -- chmod a+r /etc/apt/keyrings/docker.asc
+    - curtin in-target -- sh -c 'echo "deb [arch=$(dpkg --print-architecture) signed-by=/etc/apt/keyrings/docker.asc] https://download.docker.com/linux/ubuntu $(. /etc/os-release && echo "$VERSION_CODENAME") stable" | tee /etc/apt/sources.list.d/docker.list > /dev/null'
+    - curtin in-target -- apt update
+    - curtin in-target -- apt-get install -y docker-ce docker-ce-cli containerd.io docker-buildx-plugin docker-compose-plugin
